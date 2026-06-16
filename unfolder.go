@@ -279,9 +279,9 @@ func (u *Unfolder) plan(targets []*target) ([]*expansion, error) {
 	existingNames := u.collectExistingNames()
 	var out []*expansion
 	for _, t := range targets {
-		keys, err := u.lookupKeys(t)
-		if err != nil {
-			return nil, err
+		keys := u.lookupKeys(t)
+		if len(keys) == 0 {
+			continue
 		}
 		newNames, err := assignNewNames(t, keys, existingNames)
 		if err != nil {
@@ -315,16 +315,19 @@ func (u *Unfolder) collectExistingNames() map[string]bool {
 	return out
 }
 
-func (u *Unfolder) lookupKeys(t *target) ([]instanceKey, error) {
+// lookupKeys returns the instance keys for the target found in state. An
+// empty return means the target has no instances; the caller treats this as a
+// no-op rather than an error (count = 0 / for_each = {} are valid in
+// Terraform, and a stale state will be flagged by terraform plan anyway).
+func (u *Unfolder) lookupKeys(t *target) []instanceKey {
 	if t.kind == "resource" {
 		key := stateKey{module: "", mode: "managed", typ: t.typ, name: t.name}
 		keys := u.state[key]
 		if len(keys) == 0 {
-			return nil, fmt.Errorf("%s: no state instances for resource %s.%s", t.file, t.typ, t.name)
+			return nil
 		}
-		return sortKeys(dedupeKeys(keys)), nil
+		return sortKeys(dedupeKeys(keys))
 	}
-	// module: collect distinct keys from outermost-module addresses matching module.<name>[...]
 	prefix := "module." + t.name + "["
 	seen := map[string]instanceKey{}
 	for addr := range u.moduleAddrs {
@@ -343,13 +346,13 @@ func (u *Unfolder) lookupKeys(t *target) ([]instanceKey, error) {
 		seen[ik.String()] = ik
 	}
 	if len(seen) == 0 {
-		return nil, fmt.Errorf("%s: no state instances for module %s", t.file, t.name)
+		return nil
 	}
 	out := make([]instanceKey, 0, len(seen))
 	for _, v := range seen {
 		out = append(out, v)
 	}
-	return sortKeys(out), nil
+	return sortKeys(out)
 }
 
 // parseSubscript parses the contents between [ and ] of a state address

@@ -19,15 +19,22 @@ func TestUnfold_Golden(t *testing.T) {
 	cases := []string{
 		"basic-resource",
 		"count",
+		"count-ref",
+		"each-value",
 		"module-foreach",
+		"module-count",
 		"module-ref",
 		"nested-block",
 		"cross-file-ref",
+		"multi-target",
 		"odd-blocks",
 		"preceded-by-dot",
 		"no-changes",
 		"sanitize-key",
 		"malformed-state",
+		"missing-state",
+		"missing-state-module",
+		"empty-count",
 	}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -44,8 +51,6 @@ func TestUnfold_Errors(t *testing.T) {
 		"parse-error",
 		"bad-state-version",
 		"bad-state-json",
-		"missing-state",
-		"missing-state-module",
 		"collision",
 		"unresolvable-dynamic",
 		"unresolvable-whole",

@@ -91,7 +91,7 @@ When a `module` block is expanded, the children inside the module follow automat
 ## Limitations
 
 - Only `*.tf` files directly in the target directory are scanned. Subdirectories are not recursed.
-- The state must already contain the instances for every expanded target. Drift or missing instances are reported as errors.
+- A target with no instances in state (`count = 0`, `for_each = {}`, or simply not yet applied) is left untouched. Re-run after `terraform apply` if you expected expansion.
 - References that cannot be statically rewritten cause an error rather than a partial rewrite. This includes dynamic keys (`aws_x.y[var.k]`) and whole-collection access (`aws_x.y` without a subscript, or expressions like `for v in aws_x.y : ...`).
 - The new resource label is `<original>_<sanitized-key>`, where any character outside `[A-Za-z0-9_-]` is replaced with `_`. If two keys sanitize to the same name, or the resulting name collides with an existing block, the run errors out.
 - `each.value` is substituted with the same string as `each.key`. This is correct for set-style for_each (`for_each = toset(...)`). For map-style for_each, `each.value` is not the value of the map entry but the key itself; verify the result if you rely on it.
