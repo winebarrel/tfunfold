@@ -6,7 +6,7 @@
 
 `tfunfold` rewrites Terraform `resource` and `module` blocks that use `for_each` or `count`, splitting each one into a separate block per instance and emitting a `moved` block so that `terraform apply` does not re-create existing infrastructure.
 
-Instance keys come from a `terraform.tfstate` file. The tool does not call `terraform`, but the state needs to exist, so `terraform init` and `terraform apply` (or `terraform state pull`) must have been run first.
+Instance keys come from Terraform state. By default tfunfold invokes `terraform state pull` in the target directory, so `terraform init` has to have been run first but state does not need to live on disk (the command works for both local and remote backends). Pass `--state` to read a state file directly when you want to skip the `terraform` invocation (offline analysis, pre-fetched JSON, etc.).
 
 ## Installation
 
@@ -26,7 +26,7 @@ Arguments:
 
 Flags:
   -h, --help            Show help.
-  -s, --state=STRING    Path to the terraform.tfstate file (default: <dir>/terraform.tfstate).
+  -s, --state=STRING    Path to a terraform.tfstate file. When omitted, 'terraform state pull' is invoked in <dir>.
   -i, --in-place        Write changes back to files instead of stdout.
       --version
 ```
@@ -79,7 +79,7 @@ After running `terraform plan`, the output should report `0 to add, 0 to change,
 ## How it works
 
 1. `*.tf` files in the target directory are parsed with `hclwrite`.
-2. `terraform.tfstate` is read directly as JSON. For each `resource` or `module` block that has `for_each` or `count`, the tool collects the instance keys from state.
+2. State JSON is obtained by running `terraform state pull` (or, with `--state`, by reading the given file). For each `resource` or `module` block that has `for_each` or `count`, the tool collects the instance keys from state.
 3. The original block is replaced by one block per key. The new block label is `<original>_<sanitized-key>`. Within the body, `each.key`, `each.value`, and `count.index` are substituted with their literal values.
 4. References to the expanded blocks anywhere in the directory (`<type>.<name>["k"]`, `module.<name>[0]`, ...) are rewritten to the new identifiers.
 5. A `moved` block is inserted directly before each new block so Terraform keeps the existing state.
@@ -95,7 +95,6 @@ When a `module` block is expanded, the children inside the module follow automat
 - References that cannot be statically rewritten cause an error rather than a partial rewrite. This includes dynamic keys (`aws_x.y[var.k]`) and whole-collection access (`aws_x.y` without a subscript, or expressions like `for v in aws_x.y : ...`).
 - The new resource label is `<original>_<sanitized-key>`, where any character outside `[A-Za-z0-9_-]` is replaced with `_`. If two keys sanitize to the same name, or the resulting name collides with an existing block, the run errors out.
 - `each.value` is substituted with the same string as `each.key`. This matches Terraform's semantics for set-style `for_each` (`toset(...)`), where key and value are equal. For map-style `for_each` (`{ k = v, ... }`), Terraform's `each.value` is the map entry's value, not its key. The tool only sees the keys (state does not record the original map values), so the substitution replaces `each.value` with the key string and the real value is lost. Review any map-style target that references `each.value` before applying.
-- Remote backends are not handled directly. Run `terraform state pull > local.tfstate` first and pass it with `--state`.
 - `moved` blocks emitted by the tool stay in place after `terraform apply`. Remove them once you no longer need the migration path.
 
 ## Verification
