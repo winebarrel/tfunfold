@@ -30,3 +30,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+/tfunfold
+
+# Test fixtures: re-include terraform.tfstate (overridden by global .gitignore).
+!testdata/**/terraform.tfstate
