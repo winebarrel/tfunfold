@@ -180,7 +180,8 @@ func (u *Unfolder) loadState() error {
 }
 
 // outermostModule returns the first "module.NAME[KEY]" segment of a state
-// module address, or "" if the address has no module prefix.
+// module address. An empty input returns "". Any other input that is not
+// prefixed with "module." is returned unchanged.
 func outermostModule(addr string) string {
 	if addr == "" {
 		return ""
