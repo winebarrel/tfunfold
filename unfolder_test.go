@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestUnfold_Golden(t *testing.T) {
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			tmp := copyInputToTemp(t, filepath.Join("testdata", name, "input"))
-			u := tfunfold.NewUnfolder(tmp)
+			u := newOfflineUnfolder(tmp)
 			require.NoError(t, u.Unfold(true))
 			compareDir(t, tmp, filepath.Join("testdata", name, "expected"))
 		})
@@ -61,7 +62,7 @@ func TestUnfold_Errors(t *testing.T) {
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			tmp := copyInputToTemp(t, filepath.Join("testdata", name, "input"))
-			u := tfunfold.NewUnfolder(tmp)
+			u := newOfflineUnfolder(tmp)
 			require.Error(t, u.Unfold(true))
 		})
 	}
@@ -70,7 +71,7 @@ func TestUnfold_Errors(t *testing.T) {
 func TestUnfold_StdoutMode(t *testing.T) {
 	tmp := copyInputToTemp(t, "testdata/basic-resource/input")
 	var buf bytes.Buffer
-	u := tfunfold.NewUnfolder(tmp)
+	u := newOfflineUnfolder(tmp)
 	u.Out = &buf
 	require.NoError(t, u.Unfold(false))
 	assert.Contains(t, buf.String(), `null_resource.x_a`)
@@ -85,7 +86,7 @@ func TestUnfold_StdoutMode(t *testing.T) {
 func TestUnfold_StdoutNoChange(t *testing.T) {
 	tmp := copyInputToTemp(t, "testdata/no-changes/input")
 	var buf bytes.Buffer
-	u := tfunfold.NewUnfolder(tmp)
+	u := newOfflineUnfolder(tmp)
 	u.Out = &buf
 	require.NoError(t, u.Unfold(false))
 	assert.Empty(t, buf.String())
@@ -93,7 +94,7 @@ func TestUnfold_StdoutNoChange(t *testing.T) {
 
 func TestUnfold_StdoutWriteError(t *testing.T) {
 	tmp := copyInputToTemp(t, "testdata/basic-resource/input")
-	u := tfunfold.NewUnfolder(tmp)
+	u := newOfflineUnfolder(tmp)
 	u.Out = failingWriter{}
 	require.Error(t, u.Unfold(false))
 }
@@ -108,22 +109,80 @@ func TestUnfold_GlobError(t *testing.T) {
 func TestUnfold_LoadReadError(t *testing.T) {
 	tmp := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(tmp, "trap.tf"), 0o755))
-	u := tfunfold.NewUnfolder(tmp)
+	u := newOfflineUnfolder(tmp)
 	require.Error(t, u.Unfold(true))
 }
 
 func TestUnfold_StateReadError(t *testing.T) {
 	tmp := copyInputToTemp(t, "testdata/no-changes/input")
 	require.NoError(t, os.Remove(filepath.Join(tmp, "terraform.tfstate")))
-	u := tfunfold.NewUnfolder(tmp)
+	u := newOfflineUnfolder(tmp)
 	require.Error(t, u.Unfold(true))
+}
+
+func TestUnfold_StatePullSuccess(t *testing.T) {
+	if _, err := exec.LookPath("terraform"); err != nil {
+		t.Skip("terraform not in PATH")
+	}
+	// No StatePath: tfunfold invokes `terraform state pull` which reads the
+	// local terraform.tfstate (the local backend works without init). The
+	// state file needs realistic metadata or terraform normalises it away.
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "main.tf"), []byte(`resource "null_resource" "x" {
+  for_each = toset(["a"])
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "terraform.tfstate"), []byte(`{
+  "version": 4,
+  "terraform_version": "1.0.0",
+  "serial": 1,
+  "lineage": "00000000-0000-0000-0000-000000000000",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "null_resource",
+      "name": "x",
+      "provider": "provider[\"registry.terraform.io/hashicorp/null\"]",
+      "instances": [
+        {"index_key": "a", "schema_version": 0, "attributes": {"id": "1", "triggers": null}, "sensitive_attributes": []}
+      ]
+    }
+  ]
+}
+`), 0o644))
+	u := tfunfold.NewUnfolder(tmp)
+	require.NoError(t, u.Unfold(true))
+	got, err := os.ReadFile(filepath.Join(tmp, "main.tf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(got), `resource "null_resource" "x_a"`)
+	assert.Contains(t, string(got), `from = null_resource.x["a"]`)
+}
+
+func TestUnfold_StatePullError(t *testing.T) {
+	// Backend config without `terraform init` makes `terraform state pull`
+	// exit non-zero; the error must bubble up.
+	tmp := t.TempDir()
+	src := []byte(`terraform {
+  backend "s3" {
+    bucket = "fake"
+    key    = "fake"
+    region = "us-east-1"
+  }
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "main.tf"), src, 0o644))
+	u := tfunfold.NewUnfolder(tmp)
+	err := u.Unfold(true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "terraform state pull")
 }
 
 func TestUnfold_InPlaceWriteError(t *testing.T) {
 	tmp := copyInputToTemp(t, "testdata/basic-resource/input")
 	require.NoError(t, os.Chmod(filepath.Join(tmp, "main.tf"), 0o444))
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(tmp, "main.tf"), 0o644) })
-	u := tfunfold.NewUnfolder(tmp)
+	u := newOfflineUnfolder(tmp)
 	require.Error(t, u.Unfold(true))
 }
 
@@ -384,6 +443,12 @@ c = 4
 type failingWriter struct{}
 
 func (failingWriter) Write(_ []byte) (int, error) { return 0, errors.New("boom") }
+
+func newOfflineUnfolder(dir string) *tfunfold.Unfolder {
+	u := tfunfold.NewUnfolder(dir)
+	u.StatePath = filepath.Join(dir, "terraform.tfstate")
+	return u
+}
 
 func copyInputToTemp(t *testing.T, srcDir string) string {
 	t.Helper()

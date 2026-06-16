@@ -16,7 +16,7 @@ func init() {
 
 type options struct {
 	Dir     string `arg:"" optional:"" default:"." help:"Directory containing *.tf files (default: \".\")."`
-	State   string `short:"s" help:"Path to the terraform.tfstate file (default: <dir>/terraform.tfstate)."`
+	State   string `short:"s" help:"Path to a terraform.tfstate file. When omitted, 'terraform state pull' is invoked in <dir>."`
 	InPlace bool   `short:"i" help:"Write changes back to files instead of stdout."`
 	Version kong.VersionFlag
 }

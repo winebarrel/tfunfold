@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -78,10 +79,9 @@ type expansion struct {
 
 func NewUnfolder(dir string) *Unfolder {
 	return &Unfolder{
-		Dir:       dir,
-		StatePath: filepath.Join(dir, "terraform.tfstate"),
-		Out:       os.Stdout,
-		files:     map[string]*hclwrite.File{},
+		Dir:   dir,
+		Out:   os.Stdout,
+		files: map[string]*hclwrite.File{},
 	}
 }
 
@@ -149,13 +149,13 @@ type rawStateInstance struct {
 }
 
 func (u *Unfolder) loadState() error {
-	src, err := os.ReadFile(u.StatePath)
+	src, err := u.readState()
 	if err != nil {
-		return fmt.Errorf("read state %s: %w", u.StatePath, err)
+		return err
 	}
 	var raw rawState
 	if err := json.Unmarshal(src, &raw); err != nil {
-		return fmt.Errorf("parse state %s: %w", u.StatePath, err)
+		return fmt.Errorf("parse state: %w", err)
 	}
 	if raw.Version != 4 {
 		return fmt.Errorf("unsupported state version %d (want 4)", raw.Version)
@@ -177,6 +177,30 @@ func (u *Unfolder) loadState() error {
 		}
 	}
 	return nil
+}
+
+// readState loads the Terraform state JSON. When StatePath is set the file is
+// read directly; otherwise `terraform state pull` is invoked in Dir so that
+// the user does not have to materialise the state on disk first. The pull
+// path works for both local and remote backends as long as terraform init
+// has been run.
+func (u *Unfolder) readState() ([]byte, error) {
+	if u.StatePath != "" {
+		src, err := os.ReadFile(u.StatePath)
+		if err != nil {
+			return nil, fmt.Errorf("read state %s: %w", u.StatePath, err)
+		}
+		return src, nil
+	}
+	cmd := exec.Command("terraform", "state", "pull")
+	cmd.Dir = u.Dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("terraform state pull (in %s): %w: %s", u.Dir, err, strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
 }
 
 // outermostModule returns the first "module.NAME[KEY]" segment of a state
